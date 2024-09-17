@@ -111,7 +111,7 @@ app.post('/actualizar-cantrec', (req, res) => {
   const { codbar, cantrec } = req.body;
   const query = `
     UPDATE aus_pepend 
-    SET cantrec = ? 
+    SET cantrec = ?, ter = 1 
     WHERE codbar = ?;
   `;
 
