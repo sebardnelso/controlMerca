@@ -91,11 +91,11 @@ app.get('/pedidos', (req, res) => {
 // Ruta para obtener las líneas de un proveedor específico
 app.get('/lineas/:codpro', (req, res) => {
   const { codpro } = req.params;
-  const query = 
+  const query = `
     SELECT codbar, canped, cantrec 
     FROM aus_pepend 
     WHERE codpro = ?;
-  ;
+  `;
 
   db.query(query, [codpro], (error, results) => {
     if (error) {
@@ -105,7 +105,6 @@ app.get('/lineas/:codpro', (req, res) => {
     }
   });
 });
-
 
 // Ruta para actualizar la cantidad recibida
 app.post('/actualizar-cantrec', (req, res) => {
