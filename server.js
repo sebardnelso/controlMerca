@@ -88,15 +88,14 @@ app.get('/pedidos', (req, res) => {
   });
 });
 
-// Ruta para obtener las líneas de un proveedor específico, ordenadas por codbar
+// Ruta para obtener las líneas de un proveedor específico
 app.get('/lineas/:codpro', (req, res) => {
   const { codpro } = req.params;
-  const query = `
+  const query = 
     SELECT codbar, canped, cantrec 
     FROM aus_pepend 
-    WHERE codpro = ?
-    ORDER BY codbar ASC;  // Ordenar de menor a mayor
-  `;
+    WHERE codpro = ?;
+  ;
 
   db.query(query, [codpro], (error, results) => {
     if (error) {
