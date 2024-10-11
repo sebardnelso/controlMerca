@@ -123,6 +123,37 @@ app.post('/actualizar-cantrec', (req, res) => {
     }
   });
 });
+// Buscar en aus_art por código de barras
+app.get('/articulo/:codbar', (req, res) => {
+  const { codbar } = req.params;
+  const query = 'SELECT id, codbar, prove FROM aus_art WHERE codbar LIKE ? LIMIT 1';
+
+  db.query(query, [`%${codbar}%`], (error, results) => {
+    if (error) {
+      return res.status(500).json({ error: 'Error en la búsqueda' });
+    }
+    if (results.length > 0) {
+      res.json(results[0]);
+    } else {
+      res.status(404).json({ message: 'Artículo no encontrado' });
+    }
+  });
+});
+// Guardar la nueva línea en aus_pepend
+app.post('/guardar-linea', (req, res) => {
+  const { codbar, codigo, codpro, cantidad } = req.body;
+  const query = `
+    INSERT INTO aus_pepend (codbar, codigo, codpro, canped, ter) 
+    VALUES (?, ?, ?, ?, 0);
+  `;
+
+  db.query(query, [codbar, codigo, codpro, cantidad], (error, results) => {
+    if (error) {
+      return res.status(500).json({ error: 'Error al guardar la línea' });
+    }
+    res.json({ success: true });
+  });
+});
 
 // Inicia el servidor
 app.listen(port, () => {
