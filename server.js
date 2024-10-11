@@ -144,8 +144,8 @@ app.get('/buscar-codbar/:codbar', (req, res) => {
 app.post('/agregar-linea', (req, res) => {
   const { codbar, idArticulo, codpro, cantidad } = req.body;
   const query = `
-    INSERT INTO aus_pepend (codbar, codigo, codpro, canped, ter) 
-    VALUES (?, ?, ?, ?, 0);
+    INSERT INTO aus_pepend (codbar, codigo, codpro, cantrec, ter) 
+    VALUES (?, ?, ?, ?, 1);
   `;
 
   db.query(query, [codbar, idArticulo, codpro, cantidad], (error, results) => {
