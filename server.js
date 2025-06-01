@@ -81,24 +81,31 @@ app.post('/login', (req, res) => {
 app.get('/pedidos', (req, res) => {
   const { codpro } = req.query;
 
-  // Base de la consulta con JOIN para obtener 'razon' de 'aus_pro'
   let query = `
-    SELECT 
-      aus_pepend.numero, 
-      aus_pepend.codigo, 
-      aus_pepend.codbar, 
-      aus_pepend.canped, 
-      aus_pepend.codpro, 
-      aus_pepend.cantrec, 
-      aus_pepend.ter,
-      aus_pro.razon
-    FROM aus_pepend
-    INNER JOIN aus_pro ON aus_pepend.codpro = aus_pro.codigo
+    SELECT numero, codigo, codbar, canped, codpro, cantrec, ter, razon, origen FROM (
+      SELECT 
+        p1.numero, p1.codigo, p1.codbar, p1.canped, p1.codpro, p1.cantrec, p1.ter,
+        pr.razon,
+        'pepend' as origen
+      FROM aus_pepend p1
+      INNER JOIN aus_pro pr ON p1.codpro = pr.codigo
+
+      UNION ALL
+
+      SELECT 
+        p2.numero, p2.codigo, p2.codbar, p2.canped, p2.codpro, p2.cantrec, p2.ter,
+        pr.razon,
+        'pepend2' as origen
+      FROM aus_pepend2 p2
+      INNER JOIN aus_pro pr ON p2.codpro = pr.codigo
+      WHERE p2.pen = 1
+    ) as combined
   `;
-  let params = [];
+
+  const params = [];
 
   if (codpro) {
-    query += ' WHERE aus_pepend.codpro = ?';
+    query += ' WHERE codpro = ?';
     params.push(codpro);
   }
 
@@ -111,6 +118,8 @@ app.get('/pedidos', (req, res) => {
     res.status(200).json(results);
   });
 });
+
+
 
 // Ruta para sincronizar pedidos
 app.post('/sync/pedidos', (req, res) => {
@@ -181,87 +190,131 @@ app.post('/sync/actualizaciones', (req, res) => {
 
 // Ruta para obtener líneas filtradas por numero de pedido
 app.get('/lineas/:numero', (req, res) => {
-  const { numero } = req.params;
+  const numero = req.params.numero;
 
-  if (!numero) {
-    return res.status(400).json({ error: 'Número de pedido no proporcionado.' });
-  }
-  console.log(numero)
-  const query = `
-    SELECT numero, codigo, codbar, canped, codpro, cantrec, ter 
-    FROM aus_pepend 
-    WHERE numero = ? AND ter != 1;
-  `;
-
-  db.query(query, [numero], (error, results) => {
-    if (error) {
-      console.error('Error ejecutando la consulta:', error);
-      return res.status(500).json({ error: 'Error en el servidor.' });
+  // Primero buscar en aus_pepend
+  db.query('SELECT * FROM aus_pepend WHERE numero = ? AND ter != 1', [numero], (err, rows) => {
+    if (err) {
+      console.error('Error consultando aus_pepend:', err);
+      return res.status(500).json({ error: 'Error en el servidor (aus_pepend)' });
     }
-    res.status(200).json(results);
+
+    if (rows.length > 0) {
+      return res.status(200).json(rows);
+    }
+
+    // Si no encontró en aus_pepend, buscar en aus_pepend2
+    db.query('SELECT * FROM aus_pepend2 WHERE numero = ? AND ter != 1', [numero], (err2, rows2) => {
+      if (err2) {
+        console.error('Error consultando aus_pepend2:', err2);
+        return res.status(500).json({ error: 'Error en el servidor (aus_pepend2)' });
+      }
+
+      if (rows2.length > 0) {
+        return res.status(200).json(rows2);
+      }
+
+      // Si no hay en ninguna tabla
+      return res.status(404).json([]);
+    });
   });
 });
+
 
 
 // Ruta para actualizar cantrec
 app.post('/actualizar-cantrec', (req, res) => {
-  const { codbar, cantrec } = req.body;
+  const { codbar, cantrec, usuario, fecha, hora } = req.body;
 
-  if (!codbar || typeof cantrec !== 'number') {
+  if (!codbar || typeof cantrec !== 'number' || !usuario || !fecha || !hora) {
     return res.status(400).json({ error: 'Datos incompletos o incorrectos.' });
   }
 
-  const getCanPedQuery = 'SELECT canped FROM aus_pepend WHERE codbar = ?';
+  const query = `
+    SELECT 'pepend' as origen, canped, numero, codigo, codpro FROM aus_pepend WHERE codbar = ?
+    UNION ALL
+    SELECT 'pepend2' as origen, canped, numero, codigo, codpro FROM aus_pepend2 WHERE codbar = ?
+  `;
 
-  db.query(getCanPedQuery, [codbar], (err, results) => {
+  db.query(query, [codbar, codbar], (err, rows) => {
     if (err) {
-      console.error('Error obteniendo canped:', err);
-      return res.status(500).json({ error: 'Error en el servidor al obtener canped.' });
+      console.error('❌ Error consultando tablas:', err);
+      return res.status(500).json({ error: 'Error interno' });
     }
 
-    if (results.length === 0) {
-      return res.status(404).json({ error: 'Línea no encontrada.' });
+    if (rows.length === 0) {
+      return res.status(404).json({ error: 'Línea no encontrada en ninguna tabla' });
     }
 
-    const canped = results[0].canped;
+    const row = rows[0];
+    const canped = row.canped;
     const pen = (cantrec !== canped) ? 1 : 0;
     const ter = (cantrec === canped) ? 1 : 0;
 
-    const updateQuery = `
-      UPDATE aus_pepend 
-      SET cantrec = ?, ter = ?, pen = ?
-      WHERE codbar = ?
-    `;
+    const updates = [];
 
-    db.query(updateQuery, [cantrec, ter, pen, codbar], (updateErr, updateResults) => {
-      if (updateErr) {
-        console.error('Error actualizando cantrec:', updateErr);
-        return res.status(500).json({ error: 'Error al actualizar cantrec.' });
-      }
+    if (rows.some(r => r.origen === 'pepend')) {
+      updates.push(new Promise((resolve, reject) => {
+        db.query(`
+          UPDATE aus_pepend
+          SET cantrec = ?, ter = ?, pen = ?, usuario = ?, fecha = ?, hora = ?
+          WHERE codbar = ?
+        `, [cantrec, ter, pen, usuario, fecha, hora, codbar], err => {
+          if (err) return reject(err);
+          resolve();
+        });
+      }));
+    }
 
-      if (updateResults.affectedRows === 0) {
-        return res.status(404).json({ error: 'Línea no encontrada durante la actualización.' });
-      }
+    if (rows.some(r => r.origen === 'pepend2')) {
+      updates.push(new Promise((resolve, reject) => {
+        db.query(`
+          UPDATE aus_pepend2
+          SET cantrec = ?, ter = ?, pen = ?, usuario = ?, fecha = ?, hora = ?
+          WHERE codbar = ?
+        `, [cantrec, ter, pen, usuario, fecha, hora, codbar], err => {
+          if (err) return reject(err);
+          resolve();
+        });
+      }));
+    }
 
-      // Insertar en aus_pepend2 incluyendo 'pen'
-      const insertQuery = `
-        INSERT INTO aus_pepend2 (numero, codigo, codbar, canped, codpro, cantrec, ter, pen)
-        SELECT numero, codigo, codbar, canped, codpro, ?, ?, ?
-        FROM aus_pepend
-        WHERE codbar = ?
-      `;
+    if (rows.some(r => r.origen === 'pepend') && !rows.some(r => r.origen === 'pepend2')) {
+      const { numero, codigo, codpro } = row;
+      updates.push(new Promise((resolve, reject) => {
+        db.query(`
+          INSERT INTO aus_pepend2 (numero, codigo, codbar, canped, codpro, cantrec, ter, pen, usuario, fecha, hora)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `, [numero, codigo, codbar, canped, codpro, cantrec, ter, pen, usuario, fecha, hora], err => {
+          if (err) return reject(err);
+          resolve();
+        });
+      }));
+    }
 
-      db.query(insertQuery, [cantrec, ter, pen, codbar], (insertErr) => {
-        if (insertErr) {
-          console.error('Error insertando en aus_pepend2:', insertErr);
-          return res.status(500).json({ error: 'Error duplicando línea en aus_pepend2.' });
-        }
+    if (rows.some(r => r.origen === 'pepend2') && !rows.some(r => r.origen === 'pepend')) {
+      const { numero, codigo, codpro } = row;
+      updates.push(new Promise((resolve, reject) => {
+        db.query(`
+          INSERT INTO aus_pepend (numero, codigo, codbar, canped, codpro, cantrec, ter, pen, usuario, fecha, hora)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `, [numero, codigo, codbar, canped, codpro, cantrec, ter, pen, usuario, fecha, hora], err => {
+          if (err) return reject(err);
+          resolve();
+        });
+      }));
+    }
 
-        res.status(200).json({ message: 'Cantrec actualizado y duplicado en aus_pepend2.' });
+    Promise.all(updates)
+      .then(() => res.status(200).json({ message: 'Actualización exitosa.' }))
+      .catch(error => {
+        console.error('❌ Error en actualizaciones:', error);
+        res.status(500).json({ error: 'Error actualizando las tablas.' });
       });
-    });
   });
 });
+
+
 
 
 app.post('/recuperar-cantidades', (req, res) => {
